@@ -80,8 +80,8 @@ This repository is intended to be installed through BRAT from GitHub releases.
 
 Release flow:
 
-1. Update the plugin version in `package.json`.
-2. Run `npm version patch`, `npm version minor`, or `npm version major`.
+1. Run `npm version patch`, `npm version minor`, `npm version major`, or `npm version <exact-version>`.
+2. Verify that `package.json`, `manifest.json`, and `versions.json` were updated together.
 3. Push commits and tags with `git push && git push --tags`.
 4. GitHub Actions builds the plugin and uploads `manifest.json`, `main.js`, `styles.css`, and `versions.json` to the release.
 
