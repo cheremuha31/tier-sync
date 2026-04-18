@@ -30,12 +30,21 @@ export function createDefaultSettings(): TierSyncSettings {
 	};
 }
 
-export function migrateSettings(data: unknown): TierSyncSettings {
+export function migrateBoardData(data: unknown): Pick<
+	TierSyncSettings,
+	"minPlaytime" | "excludedAppIds" | "games" | "tiers" | "placements"
+> {
 	const defaults = createDefaultSettings();
 	const raw = isRecord(data) ? data : undefined;
 
 	if (!raw) {
-		return defaults;
+		return {
+			minPlaytime: defaults.minPlaytime,
+			excludedAppIds: defaults.excludedAppIds,
+			games: defaults.games,
+			tiers: defaults.tiers,
+			placements: defaults.placements,
+		};
 	}
 
 	const legacyTierData = isRecord(raw.tiers) && !Array.isArray(raw.tiers)
@@ -51,17 +60,30 @@ export function migrateSettings(data: unknown): TierSyncSettings {
 		: legacyTierData?.placements;
 
 	return {
-		steamApiKey: readString(raw.steamApiKey),
-		steamId: readString(raw.steamId),
-		rawgApiKey: readString(raw.rawgApiKey),
 		minPlaytime: readNonNegativeInteger(raw.minPlaytime, DEFAULT_MIN_PLAYTIME),
 		excludedAppIds: normalizeExcludedAppIds(raw.excludedAppIds),
-		cardDetails: normalizeCardDetailsMode(raw.cardDetails),
-		cardSize: normalizeCardSize(raw.cardSize),
-		autoTierTextColor: readBoolean(raw.autoTierTextColor, true),
 		games,
 		tiers,
 		placements: normalizePlacements(rawPlacements, tiers, validGameIds),
+	};
+}
+
+export function migrateSettings(data: unknown): TierSyncSettings {
+	const defaults = createDefaultSettings();
+	const raw = isRecord(data) ? data : undefined;
+
+	if (!raw) {
+		return defaults;
+	}
+
+	return {
+		steamApiKey: readString(raw.steamApiKey),
+		steamId: readString(raw.steamId),
+		rawgApiKey: readString(raw.rawgApiKey),
+		cardDetails: normalizeCardDetailsMode(raw.cardDetails),
+		cardSize: normalizeCardSize(raw.cardSize),
+		autoTierTextColor: readBoolean(raw.autoTierTextColor, true),
+		...migrateBoardData(raw),
 	};
 }
 

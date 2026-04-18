@@ -1,6 +1,6 @@
-import { normalizePath, Notice, Plugin } from "obsidian";
+import { Notice, Plugin, normalizePath } from "obsidian";
 import { registerCommands } from "./commands";
-import { BACKLOG_TIER_ID, VIEW_TYPE_TIER_SYNC } from "./constants";
+import { BACKLOG_TIER_ID, LEGACY_BOARD_DATA_FILE_PATH, VIEW_TYPE_TIER_SYNC } from "./constants";
 import { buildTierListMarkdown, createExportFileName } from "./export";
 import {
 	buildGameIdSet,
@@ -8,6 +8,7 @@ import {
 	createNextTierName,
 	createTierDefinition,
 	findFallbackTierId,
+	migrateBoardData,
 	migrateSettings,
 	moveTier,
 	normalizePlacements,
@@ -35,9 +36,11 @@ export default class TierSyncPlugin extends Plugin {
 	syncInProgress = false;
 	private readonly headerImageRequests = new Map<number, Promise<string | null>>();
 	private readonly resolvedHeaderImages = new Map<number, string | null>();
+	private externalSettingsReloadInProgress = false;
 
 	async onload(): Promise<void> {
 		await this.loadSettings();
+		await this.migrateLegacyBoardFileIfNeeded();
 		this.settings.placements = reconcilePlacements(
 			this.settings.tiers,
 			this.getVisibleGames(),
@@ -506,7 +509,21 @@ export default class TierSyncPlugin extends Plugin {
 				: "Removed tier.",
 		);
 
-		return true;
+	return true;
+	}
+
+	async onExternalSettingsChange(): Promise<void> {
+		if (this.externalSettingsReloadInProgress) {
+			return;
+		}
+
+		this.externalSettingsReloadInProgress = true;
+
+		try {
+			await this.reloadSettingsFromDisk();
+		} finally {
+			this.externalSettingsReloadInProgress = false;
+		}
 	}
 
 	async loadSettings(): Promise<void> {
@@ -515,6 +532,64 @@ export default class TierSyncPlugin extends Plugin {
 
 	async saveSettings(): Promise<void> {
 		await this.saveData(this.settings);
+	}
+
+	private async reloadSettingsFromDisk(): Promise<void> {
+		const nextSettings = migrateSettings(await this.loadData());
+
+		nextSettings.placements = reconcilePlacements(
+			nextSettings.tiers,
+			filterExcludedGames(nextSettings.games, nextSettings.excludedAppIds),
+			nextSettings.placements,
+		);
+
+		this.settings = nextSettings;
+		this.refreshViews();
+	}
+
+	private async migrateLegacyBoardFileIfNeeded(): Promise<void> {
+		const legacyBoardFilePath = normalizePath(LEGACY_BOARD_DATA_FILE_PATH);
+
+		if (!(await this.app.vault.adapter.exists(legacyBoardFilePath))) {
+			return;
+		}
+
+		try {
+			const rawLegacyBoardData = JSON.parse(
+				await this.app.vault.adapter.read(legacyBoardFilePath),
+			) as unknown;
+
+			this.settings = {
+				...this.settings,
+				...migrateBoardData(rawLegacyBoardData),
+			};
+			this.settings.placements = reconcilePlacements(
+				this.settings.tiers,
+				this.getVisibleGames(),
+				this.settings.placements,
+			);
+			await this.saveSettings();
+			await this.removeLegacyBoardFile(legacyBoardFilePath);
+		} catch (error: unknown) {
+			const message = error instanceof Error ? error.message : "Could not migrate the old board file.";
+			new Notice(`${message} Check ${legacyBoardFilePath}.`, 8000);
+		}
+	}
+
+	private async removeLegacyBoardFile(filePath: string): Promise<void> {
+		await this.app.vault.adapter.remove(filePath);
+
+		const parentPath = getParentPath(filePath);
+
+		if (!parentPath || !(await this.app.vault.adapter.exists(parentPath))) {
+			return;
+		}
+
+		const listing = await this.app.vault.adapter.list(parentPath);
+
+		if (listing.files.length === 0 && listing.folders.length === 0) {
+			await this.app.vault.adapter.rmdir(parentPath, false);
+		}
 	}
 
 	private getValidGameIdSet(): Set<number> | undefined {
@@ -741,6 +816,13 @@ function createCustomGameId(games: SteamGame[]): number {
 
 function compareGamesByName(left: SteamGame, right: SteamGame): number {
 	return left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
+}
+
+function getParentPath(path: string): string | null {
+	const normalizedPath = normalizePath(path);
+	const separatorIndex = normalizedPath.lastIndexOf("/");
+
+	return separatorIndex === -1 ? null : normalizedPath.slice(0, separatorIndex);
 }
 
 function mergePlaytimeMinutes(

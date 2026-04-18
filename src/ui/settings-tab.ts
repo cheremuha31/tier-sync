@@ -21,7 +21,7 @@ export class TierSyncSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("Steam web API key")
-			.setDesc("Stored locally in this vault.")
+			.setDesc("Stored in the plugin data file.")
 			.addText((text) => {
 				text.setPlaceholder("Paste your key");
 				text.setValue(this.plugin.settings.steamApiKey);
@@ -67,7 +67,7 @@ export class TierSyncSettingTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName("Excluded games")
 			.setDesc(
-				"Games in this list stay out of the board and future syncs. Use it for hidden games or other exclusions.",
+				"Games in this list stay out of the board and future syncs.",
 			)
 			.addTextArea((text) => {
 				text.setPlaceholder("12345, 67890");
@@ -92,7 +92,7 @@ export class TierSyncSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("Custom game API key")
-			.setDesc("Required for custom game search and cover art. Stored locally in this vault.")
+			.setDesc("Required for custom game search and cover art. Stored in the plugin data file.")
 			.addText((text) => {
 				text.setPlaceholder("Paste your API key");
 				text.setValue(this.plugin.settings.rawgApiKey);
