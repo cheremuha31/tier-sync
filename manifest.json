@@ -1,7 +1,6 @@
 {
 	"id": "tier-sync",
 	"name": "Tier Sync",
-	"version": "1.1.1",
 	"minAppVersion": "0.15.0",
 	"description": "Sync your Steam library into a drag-and-drop tier board inside Obsidian.",
 	"author": "cheremuha31",

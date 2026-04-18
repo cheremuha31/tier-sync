@@ -228,6 +228,7 @@ export class TierSyncView extends ItemView {
 					src: initialImageUrl,
 					alt: game.name,
 					loading: "lazy",
+					draggable: "false",
 				},
 			});
 
@@ -295,7 +296,11 @@ export class TierSyncView extends ItemView {
 			animation: 70,
 			draggable: ".tier-sync-card",
 			ghostClass: "tier-sync-ghost",
+			chosenClass: "tier-sync-chosen",
 			dragClass: "tier-sync-dragging",
+			forceFallback: true,
+			fallbackOnBody: true,
+			fallbackClass: "tier-sync-fallback",
 			onEnd: () => {
 				void this.saveNewOrder();
 			},
