@@ -12,6 +12,7 @@ import {
 	migrateSettings,
 	moveTier,
 	normalizePlacements,
+	reconcileBacklogTierState,
 	formatExcludedAppIds,
 	parseExcludedAppIds,
 } from "./settings";
@@ -452,8 +453,19 @@ export default class TierSyncPlugin extends Plugin {
 			return;
 		}
 
-		this.settings.tiers = this.settings.tiers.map((tier) =>
+		const renamedTiers = this.settings.tiers.map((tier) =>
 			tier.id === tierId ? { ...tier, name: normalizedName } : tier,
+		);
+		const reconciledBacklogState = reconcileBacklogTierState(
+			renamedTiers,
+			this.settings.placements,
+		);
+
+		this.settings.tiers = reconciledBacklogState.tiers;
+		this.settings.placements = normalizePlacements(
+			reconciledBacklogState.placements,
+			reconciledBacklogState.tiers,
+			this.getValidGameIdSet(),
 		);
 		await this.saveSettings();
 		this.refreshViews();

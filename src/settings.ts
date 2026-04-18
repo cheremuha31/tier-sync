@@ -58,13 +58,15 @@ export function migrateBoardData(data: unknown): Pick<
 	const rawPlacements = isRecord(raw.placements)
 		? raw.placements
 		: legacyTierData?.placements;
+	const normalizedPlacements = normalizePlacements(rawPlacements, tiers, validGameIds);
+	const reconciledBacklogState = reconcileBacklogTierState(tiers, normalizedPlacements);
 
 	return {
 		minPlaytime: readNonNegativeInteger(raw.minPlaytime, DEFAULT_MIN_PLAYTIME),
 		excludedAppIds: normalizeExcludedAppIds(raw.excludedAppIds),
 		games,
-		tiers,
-		placements: normalizePlacements(rawPlacements, tiers, validGameIds),
+		tiers: reconciledBacklogState.tiers,
+		placements: reconciledBacklogState.placements,
 	};
 }
 
@@ -98,6 +100,75 @@ export function parseExcludedAppIds(input: string): number[] {
 
 export function formatExcludedAppIds(appIds: number[]): string {
 	return appIds.join(", ");
+}
+
+export function reconcileBacklogTierState(
+	tiers: TierDefinition[],
+	placements: Record<string, number[]>,
+): {
+	tiers: TierDefinition[];
+	placements: Record<string, number[]>;
+} {
+	const targetBacklogIndex = findPreferredBacklogTierIndex(tiers);
+
+	if (targetBacklogIndex === -1) {
+		return {
+			tiers: cloneTierDefinitions(tiers),
+			placements: clonePlacements(placements),
+		};
+	}
+
+	const nextTiers = cloneTierDefinitions(tiers);
+	const nextPlacements = clonePlacements(placements);
+	const currentBacklogIndex = nextTiers.findIndex((tier) => tier.id === BACKLOG_TIER_ID);
+
+	if (currentBacklogIndex !== -1 && currentBacklogIndex !== targetBacklogIndex) {
+		const currentBacklogTier = nextTiers[currentBacklogIndex];
+
+		if (currentBacklogTier) {
+			const existingIds = new Set<string>();
+
+			for (let index = 0; index < nextTiers.length; index += 1) {
+				if (index === currentBacklogIndex) {
+					continue;
+				}
+
+				const tier = nextTiers[index];
+
+				if (tier) {
+					existingIds.add(tier.id);
+				}
+			}
+
+			const demotedTierId = uniqueTierId(
+				getTierIdBase(currentBacklogTier.name, currentBacklogIndex),
+				existingIds,
+			);
+
+			nextTiers[currentBacklogIndex] = {
+				...currentBacklogTier,
+				id: demotedTierId,
+			};
+			nextPlacements[demotedTierId] = nextPlacements[currentBacklogTier.id] ?? [];
+			delete nextPlacements[currentBacklogTier.id];
+		}
+	}
+
+	const targetBacklogTier = nextTiers[targetBacklogIndex];
+
+	if (targetBacklogTier && targetBacklogTier.id !== BACKLOG_TIER_ID) {
+		nextTiers[targetBacklogIndex] = {
+			...targetBacklogTier,
+			id: BACKLOG_TIER_ID,
+		};
+		nextPlacements[BACKLOG_TIER_ID] = nextPlacements[targetBacklogTier.id] ?? [];
+		delete nextPlacements[targetBacklogTier.id];
+	}
+
+	return {
+		tiers: nextTiers,
+		placements: nextPlacements,
+	};
 }
 
 export function normalizePlacements(
@@ -238,8 +309,44 @@ function createEmptyPlacements(tiers: TierDefinition[]): Record<string, number[]
 	return placements;
 }
 
+function clonePlacements(placements: Record<string, number[]>): Record<string, number[]> {
+	const clonedPlacements: Record<string, number[]> = {};
+
+	for (const [tierId, gameIds] of Object.entries(placements)) {
+		clonedPlacements[tierId] = gameIds.slice();
+	}
+
+	return clonedPlacements;
+}
+
 function cloneTierDefinitions(tiers: TierDefinition[]): TierDefinition[] {
 	return tiers.map((tier) => ({ ...tier }));
+}
+
+function findPreferredBacklogTierIndex(tiers: TierDefinition[]): number {
+	for (let index = tiers.length - 1; index >= 0; index -= 1) {
+		const tier = tiers[index];
+
+		if (tier && isBacklogTierName(tier.name)) {
+			return index;
+		}
+	}
+
+	return -1;
+}
+
+function isBacklogTierName(name: string): boolean {
+	return name.trim().toLowerCase() === "backlog";
+}
+
+function getTierIdBase(name: string, fallbackIndex: number): string {
+	const normalizedName = name.trim();
+
+	if (isBacklogTierName(normalizedName)) {
+		return BACKLOG_TIER_ID;
+	}
+
+	return slugify(normalizedName) || `tier-${fallbackIndex + 1}`;
 }
 
 function normalizeGames(
