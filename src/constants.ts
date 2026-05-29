@@ -4,6 +4,7 @@ export const VIEW_TYPE_TIER_SYNC = "tier-sync-view";
 export const BACKLOG_TIER_ID = "backlog";
 export const UNASSIGNED_SECTION_ID = "__unassigned__";
 export const LEGACY_BOARD_DATA_FILE_PATH = "Tier Sync/tier-sync-board.json";
+export const BOARD_DATA_FILE_PATH = "Tier Sync/board.json";
 
 export const DEFAULT_TIER_COLORS = [
 	"#ff6b6b",

@@ -1,5 +1,6 @@
 import { BACKLOG_TIER_ID, DEFAULT_TIER_COLORS, DEFAULT_TIERS } from "./constants";
 import type {
+	DeviceSettings,
 	GameCardDetailsMode,
 	GameSource,
 	LegacySteamGame,
@@ -11,6 +12,38 @@ import { slugify } from "./utils";
 
 const HEX_COLOR_PATTERN = /^#[0-9a-f]{6}$/i;
 const DEFAULT_MIN_PLAYTIME = 120;
+
+export function createDefaultDeviceSettings(): DeviceSettings {
+	return {
+		steamApiKey: "",
+		steamId: "",
+		rawgApiKey: "",
+		cardDetails: "title",
+		cardSize: 100,
+		autoTierTextColor: true,
+	};
+}
+
+export function migrateDeviceSettings(data: unknown): DeviceSettings {
+	const raw = isRecord(data) ? data : undefined;
+
+	if (!raw) {
+		return createDefaultDeviceSettings();
+	}
+
+	return {
+		steamApiKey: readString(raw.steamApiKey),
+		steamId: readString(raw.steamId),
+		rawgApiKey: readString(raw.rawgApiKey),
+		cardDetails: normalizeCardDetailsMode(raw.cardDetails),
+		cardSize: normalizeCardSize(raw.cardSize),
+		autoTierTextColor: readBoolean(raw.autoTierTextColor, true),
+	};
+}
+
+export function hasBoardDataInline(data: unknown): boolean {
+	return isRecord(data) && Array.isArray((data as Record<string, unknown>).games);
+}
 
 export function createDefaultSettings(): TierSyncSettings {
 	const tiers = cloneTierDefinitions(DEFAULT_TIERS);

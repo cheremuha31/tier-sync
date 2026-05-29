@@ -21,15 +21,18 @@ export interface TierDefinition {
 	color: string;
 }
 
-export interface TierSyncSettings {
+export interface DeviceSettings {
 	steamApiKey: string;
 	steamId: string;
 	rawgApiKey: string;
-	minPlaytime: number;
-	excludedAppIds: number[];
 	cardDetails: GameCardDetailsMode;
 	cardSize: number;
 	autoTierTextColor: boolean;
+}
+
+export interface TierSyncSettings extends DeviceSettings {
+	minPlaytime: number;
+	excludedAppIds: number[];
 	games: SteamGame[];
 	tiers: TierDefinition[];
 	placements: Record<string, number[]>;

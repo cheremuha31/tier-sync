@@ -1,6 +1,6 @@
-import { Notice, Plugin, normalizePath } from "obsidian";
+import { Notice, Plugin, TFile, normalizePath } from "obsidian";
 import { registerCommands } from "./commands";
-import { BACKLOG_TIER_ID, LEGACY_BOARD_DATA_FILE_PATH, VIEW_TYPE_TIER_SYNC } from "./constants";
+import { BACKLOG_TIER_ID, BOARD_DATA_FILE_PATH, LEGACY_BOARD_DATA_FILE_PATH, VIEW_TYPE_TIER_SYNC } from "./constants";
 import { buildTierListMarkdown, createExportFileName } from "./export";
 import {
 	buildGameIdSet,
@@ -8,7 +8,9 @@ import {
 	createNextTierName,
 	createTierDefinition,
 	findFallbackTierId,
+	hasBoardDataInline,
 	migrateBoardData,
+	migrateDeviceSettings,
 	migrateSettings,
 	moveTier,
 	normalizePlacements,
@@ -24,6 +26,7 @@ import {
 import { filterExcludedGames, reconcilePlacements } from "./tier-data";
 import type {
 	CustomGameSearchResult,
+	DeviceSettings,
 	SteamGame,
 	SteamStoreSearchResult,
 	TierSyncSettings,
@@ -38,6 +41,8 @@ export default class TierSyncPlugin extends Plugin {
 	private readonly headerImageRequests = new Map<number, Promise<string | null>>();
 	private readonly resolvedHeaderImages = new Map<number, string | null>();
 	private externalSettingsReloadInProgress = false;
+	private boardWriteInProgress = false;
+	private boardDataSaveTimer: number | null = null;
 
 	async onload(): Promise<void> {
 		await this.loadSettings();
@@ -57,11 +62,33 @@ export default class TierSyncPlugin extends Plugin {
 		});
 		registerCommands(this);
 		this.addSettingTab(new TierSyncSettingTab(this.app, this));
+
+		const boardFilePath = normalizePath(BOARD_DATA_FILE_PATH);
+
+		this.registerEvent(
+			this.app.vault.on("modify", (file) => {
+				if (file.path === boardFilePath) {
+					void this.onExternalBoardDataChange();
+				}
+			}),
+		);
+		this.registerEvent(
+			this.app.vault.on("create", (file) => {
+				if (file.path === boardFilePath) {
+					void this.onExternalBoardDataChange();
+				}
+			}),
+		);
 	}
 
 	onunload(): void {
 		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_TIER_SYNC)) {
 			leaf.detach();
+		}
+
+		if (this.boardDataSaveTimer !== null) {
+			window.clearTimeout(this.boardDataSaveTimer);
+			void this.flushBoardData();
 		}
 	}
 
@@ -539,24 +566,125 @@ export default class TierSyncPlugin extends Plugin {
 	}
 
 	async loadSettings(): Promise<void> {
-		this.settings = migrateSettings(await this.loadData());
+		const rawDeviceData = await this.loadData() as unknown;
+
+		if (hasBoardDataInline(rawDeviceData)) {
+			// Old combined format: migrate to split storage on next save
+			this.settings = migrateSettings(rawDeviceData);
+			await this.saveData(this.getDeviceSettings());
+			await this.flushBoardData();
+			return;
+		}
+
+		const rawBoardData = await this.loadBoardData();
+
+		this.settings = {
+			...migrateDeviceSettings(rawDeviceData),
+			...migrateBoardData(rawBoardData),
+		};
 	}
 
 	async saveSettings(): Promise<void> {
-		await this.saveData(this.settings);
+		await this.saveData(this.getDeviceSettings());
+		this.scheduleBoardDataSave();
 	}
 
 	private async reloadSettingsFromDisk(): Promise<void> {
-		const nextSettings = migrateSettings(await this.loadData());
+		const rawDeviceData = await this.loadData() as unknown;
 
-		nextSettings.placements = reconcilePlacements(
-			nextSettings.tiers,
-			filterExcludedGames(nextSettings.games, nextSettings.excludedAppIds),
-			nextSettings.placements,
+		this.settings = { ...this.settings, ...migrateDeviceSettings(rawDeviceData) };
+		this.refreshViews();
+	}
+
+	private async onExternalBoardDataChange(): Promise<void> {
+		if (this.boardWriteInProgress) {
+			return;
+		}
+
+		const rawBoardData = await this.loadBoardData();
+		const nextBoard = migrateBoardData(rawBoardData);
+
+		nextBoard.placements = reconcilePlacements(
+			nextBoard.tiers,
+			filterExcludedGames(nextBoard.games, nextBoard.excludedAppIds),
+			nextBoard.placements,
 		);
 
-		this.settings = nextSettings;
+		this.settings = { ...this.settings, ...nextBoard };
 		this.refreshViews();
+	}
+
+	private getDeviceSettings(): DeviceSettings {
+		return {
+			steamApiKey: this.settings.steamApiKey,
+			steamId: this.settings.steamId,
+			rawgApiKey: this.settings.rawgApiKey,
+			cardDetails: this.settings.cardDetails,
+			cardSize: this.settings.cardSize,
+			autoTierTextColor: this.settings.autoTierTextColor,
+		};
+	}
+
+	private async loadBoardData(): Promise<unknown> {
+		const filePath = normalizePath(BOARD_DATA_FILE_PATH);
+
+		try {
+			if (!(await this.app.vault.adapter.exists(filePath))) {
+				return undefined;
+			}
+
+			return JSON.parse(await this.app.vault.adapter.read(filePath)) as unknown;
+		} catch {
+			return undefined;
+		}
+	}
+
+	private scheduleBoardDataSave(): void {
+		if (this.boardDataSaveTimer !== null) {
+			window.clearTimeout(this.boardDataSaveTimer);
+		}
+
+		this.boardDataSaveTimer = window.setTimeout(() => {
+			void this.flushBoardData();
+		}, 500);
+	}
+
+	private async flushBoardData(): Promise<void> {
+		this.boardDataSaveTimer = null;
+		this.boardWriteInProgress = true;
+
+		try {
+			const filePath = normalizePath(BOARD_DATA_FILE_PATH);
+			const content = JSON.stringify(
+				{
+					minPlaytime: this.settings.minPlaytime,
+					excludedAppIds: this.settings.excludedAppIds,
+					games: this.settings.games,
+					tiers: this.settings.tiers,
+					placements: this.settings.placements,
+				},
+				null,
+				"\t",
+			);
+
+			const existing = this.app.vault.getAbstractFileByPath(filePath);
+
+			if (existing instanceof TFile) {
+				await this.app.vault.modify(existing, content);
+			} else {
+				const dirPath = normalizePath(BOARD_DATA_FILE_PATH.split("/").slice(0, -1).join("/"));
+
+				if (!(await this.app.vault.adapter.exists(dirPath))) {
+					await this.app.vault.adapter.mkdir(dirPath);
+				}
+
+				await this.app.vault.create(filePath, content);
+			}
+		} finally {
+			setTimeout(() => {
+				this.boardWriteInProgress = false;
+			}, 300);
+		}
 	}
 
 	private async migrateLegacyBoardFileIfNeeded(): Promise<void> {
